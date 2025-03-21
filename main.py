@@ -2,124 +2,141 @@ import streamlit as st
 import pandas as pd
 import datetime
 import calendar
+import os
 
 from datetime import date, timedelta
-from collections import defaultdict
 
 st.set_page_config(
     page_title="Termômetro Financeiro",
     layout="wide")
 
-if 'fixed_expenses' not in st.session_state:
-    st.session_state.fixed_expenses = {}
-if 'gastos_fixos' not in st.session_state:
-    st.session_state.gastos_fixos = pd.DataFrame(columns=['Dia', 'Descrição', 'Valor'])
-if 'transacoes' not in st.session_state:
-    st.session_state.transacoes = pd.DataFrame(columns=['Dia', 'Entrada', 'Saída', 'Diário', 'Saldo', 'Descrição'])
+DATA_DIR = 'data'
+TRANSACTIONS_FILE = os.path.join(DATA_DIR, 'transacoes.csv')
+FIXED_EXPENSES_FILE = os.path.join(DATA_DIR, 'despesas_fixas.csv')
 
-def add_fixed_expense(day, description, amount):
-    if day in st.session_state.fixed_expenses:
-        st.session_state.fixed_expenses[day].append((description, amount))
-    else:
-        st.session_state.fixed_expenses[day] = [(description, amount)]
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
+# initialize session state
+if 'fixed_expenses_dict' not in st.session_state:
+    st.session_state.fixed_expenses_dict = {}
+
+if 'transactions_dict' not in st.session_state:
+    st.session_state.transactions_dict = {}
+
+# fixed expenses dict conversion functions
+def fixed_expenses_dict_to_df(fixed_expenses_dict):
+    rows = []
+    for day, expenses in fixed_expenses_dict.items():
+        for amount, description in expenses:
+            rows.append({
+                'Dia': int(day),
+                'Descrição': description,
+                'Valor': float(amount)
+            })
+    return pd.DataFrame(rows)
+
+def fixed_expenses_df_to_dict(fixed_expenses_df):
+    fixed_expenses_dict = {}
+    if not fixed_expenses_df.empty:
+        for day, group in fixed_expenses_df.groupby('Dia'):
+            fixed_expenses_dict[day] = list(zip(group['Descrição'], group['Valor']))
+    return fixed_expenses_dict
+
+# transactions dict conversion functions
+def transactions_dict_to_df(transactions_dict):
+    rows = []
+    for date_str, transactions in transactions_dict.items():
+        rows.append({
+            'Dia': date_str,
+            'Entrada': float(transactions.get('Entrada', 0)),
+            'Saída': float(transactions.get('Saída', 0)),
+            'Diário': float(transactions.get('Diário', 0)),
+            'Saldo': float(transactions.get('Saldo', 0)),
+            'Descrição': transactions.get('Descrição', '')
+        })
+    return pd.DataFrame(rows)
+
+def transactions_df_to_dict(transactions_df):
+    transactions_dict = {}
+    if not transactions_df.empty:
+        for _, row in transactions_df.iterrows():
+            date_str = row['Dia']
+            transactions_dict[date_str] = {
+                'Entrada': float(row['Entrada']),
+                'Saída': float(row['Saída']),
+                'Diário': float(row['Diário']),
+                'Saldo': float(row['Saldo']),
+                'Descrição': row['Descrição']
+            }
+    return transactions_dict
+
+# load data from CSV files
 def load_data():
-    try:
-        transacoes = pd.read_csv(rf'data/transacoes.csv', parse_dates=['Dia'])
-        gastos_fixos = pd.read_csv(rf'data/gastos_fixos.csv', parse_dates=['Dia'])
-        return transacoes, gastos_fixos
-    except FileNotFoundError:
-        return pd.DataFrame(), pd.DataFrame()
+    if os.path.exists(FIXED_EXPENSES_FILE):
+        fixed_expenses_df = pd.read_csv(FIXED_EXPENSES_FILE)
+        st.session_state.fixed_expenses_dict = fixed_expenses_df_to_dict(fixed_expenses_df)
+    
+    if os.path.exists(TRANSACTIONS_FILE):
+        transactions_df = pd.read_csv(TRANSACTIONS_FILE)
+        st.session_state.transactions_dict = transactions_df_to_dict(transactions_df)
 
-def save_data(transacoes, gastos_fixos):
-    transacoes.to_csv(rf'data/transacoes.csv', index=False)
-    gastos_fixos.to_csv(rf'data/gastos_fixos.csv', index=False)
+def save_data():
+    # convert dicts to DataFrames for saving
+
+
+def add_fixed_expense(day, amount, description):
+    if day in st.session_state.fixed_expenses:
+        st.session_state.fixed_expenses[day].append((amount, description))
+    else:
+        st.session_state.fixed_expenses[day] = [(amount, description)]
 
 def main():
-
     st.title('🌡️💰 Termômetro Financeiro')
-    with st.expander('ℹ️ Sobre o app'):
-        st.write('''
-        Este app permite criar, modificar e visualizar sua planilha de gastos mensais e diários.
-        ''')
-    transacoes, gastos_fixos = load_data()
-    if transacoes.empty:
-        with st.form(key='expenses_form'):
-            st.header('Adicione Novo Gasto Fixo')
 
-            day = st.selectbox('Dia do mês:', list(range(1, 32)), index=29)
-            description = st.text_input('Descrição:')
-            amount = st.number_input('Valor:', min_value=0.0, format='%.2f')
-            submitted = st.form_submit_button(label='Adicionar Gasto')
-        if submitted:
+    transactions_df, fixed_expenses_df = load_data()
+    
+    # sidebar controls
+    with st.sidebar:
+        st.header('Adicionar Transação')
+
+        st.header('Adicionar Despesa Fixa')
+        day = st.selectbox('Dia do mês', list(range(1, 32)), index=0)
+        description = st.text_input('Descrição')
+        amount = st.number_input('Valor', min_value=0.0, step=10.0, format='%.2f')
+        add_submit = st.button('Adicionar Despesa Fixa')
+
+        if add_submit:
             if description and amount > 0:
-                add_fixed_expense(day, description, amount)
+                new_fixed_expense = pd.DataFrame({
+                    'Dia': [day],
+                    'Descrição': [description],
+                    'Valor': [amount]
+                })
+                fixed_expenses_df = pd.concat([fixed_expenses_df, new_fixed_expense], ignore_index=True)
+                st.write(fixed_expenses_df)
+                save_data()
                 st.success(f'Adicionado {description} (R$ {amount:.2f}) no dia {day}.')
             else:
                 st.error('Por favor, preencha todos os campos.')
-        with st.expander('📅 Gastos Fixos'):
-            for day, expenses in st.session_state.fixed_expenses.items():
-                st.write(f'**Dia {day}**')
-                for description, amount in expenses:
-                    st.write(f'- {description} (R$ {amount:.2f})')
-        fixed_expenses_dict = {day: sum(amount for _, amount in expenses) for day, expenses in st.session_state.fixed_expenses.items()}
-        gastos_fixos = pd.DataFrame([(day, description, amount) for day, expenses in st.session_state.fixed_expenses.items() for description, amount in expenses], columns=['Dia', 'Descrição', 'Valor'])
 
-        with st.form(key='create_expenses_form'):
-            st.header('Insira informações iniciais')
-            saldo_inicial = st.number_input('Saldo inicial:', value=1000)
-            data_salario = st.selectbox('Dia do salário:', list(range(1, 32)), index=29) 
-            valor_salario = st.number_input('Valor do salário:', value=1000.0)
-            gasto_diario = st.number_input('Gasto diário:', value=30.0, min_value=0.0, step=0.01)
-            submit_button = st.form_submit_button(label='Criar planilha')
-        if submit_button:
-            st.write('''
-            ## **Planilha Financeira**
-            ''')
-            transacoes = defaultdict(list)
-            dates = [(date.today() + timedelta(days=x)) for x in range((date(date.today().year, 12, 31) - date.today()).days + 1)]
-            saldo_atual = saldo_inicial
-            for dia in dates:
-                description_actions = []
-                entrada = 0
-                saida = 0
-                if dia.day == data_salario:
-                    saldo_atual += valor_salario
-                    entrada = valor_salario
-                    description_actions.append('Salário')
-                if dia.day in fixed_expenses_dict:
-                    saldo_atual -= fixed_expenses_dict[dia.day]
-                    saida = fixed_expenses_dict[dia.day]
-                    for description, amount in st.session_state.fixed_expenses[dia.day]:
-                        description_actions.append(description)
-                saldo_atual -= gasto_diario
-                description_actions.append('Gasto diário')
-                transacoes['Dia'].append(dia)
-                transacoes['Entrada'].append(entrada)
-                transacoes['Saída'].append(saida)
-                transacoes['Saldo'].append(saldo_atual)
-                transacoes['Descrição'].append(' + '.join(description_actions))
-    else:
-        df = pd.DataFrame(transacoes)
-        st.write(df)
-        st.write(gastos_fixos)
-        st.line_chart(data=df, x='Dia', y='Saldo')
+    # Main display
+    with st.expander('ℹ️ Informações Gerais'):
+        st.write('Este é o Termômetro Financeiro, uma aplicação para controle de gastos e previsão de saldo.')
+        st.write('Aqui você pode adicionar despesas fixas, despesas diárias e visualizar o saldo atual e previsões futuras.')
+        st.write('Para começar, clique em uma das abas abaixo.')        
+    tab1, tab2, tab3 = st.tabs(['Dashboard', 'Despesas Fixas', 'Criar Planilha Financeira'])
 
-        # for dia in range(1, calendar.monthrange(date.today().year, date.today().month)[1] + 1):
-        #     if dia == data_salario:
-        #         saldo_atual += valor_salario
-        #         transacoes['Dia'].append(dia)
-        #         transacoes['Descrição'].append('Salário')
-        #         transacoes['Valor'].append(valor_salario)
-        #         transacoes['Saldo'].append(saldo_atual)
-        #     else:
-        #         saldo_atual -= gasto_diario
-        #         transacoes['Dia'].append(dia)
-        #         transacoes['Descrição'].append('Gasto diário')
-        #         transacoes['Valor'].append(-gasto_diario
-
-
-        
-
+    with tab1:
+        st.subheader('Planilha de Gastos')
+    
+    with tab2:
+        st.subheader('Despesas Fixas')
+        if not fixed_expenses_df.empty:
+            st.write(fixed_expenses_df)
+        else:
+            st.write('Nenhuma despesa fixa cadastrada até o momento.')
+    with tab3:
+        st.subheader('Criar Nova Planilha Financeira')
 if __name__ == '__main__':
     main()
