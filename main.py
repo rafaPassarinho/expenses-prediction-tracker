@@ -29,6 +29,7 @@ def fixed_expenses_dict_to_df(fixed_expenses_dict):
     rows = []
     for day, expenses in fixed_expenses_dict.items():
         for amount, description in expenses:
+            print(day, description, amount)
             rows.append({
                 'Dia': int(day),
                 'Descrição': description,
@@ -40,7 +41,7 @@ def fixed_expenses_df_to_dict(fixed_expenses_df):
     fixed_expenses_dict = {}
     if not fixed_expenses_df.empty:
         for day, group in fixed_expenses_df.groupby('Dia'):
-            fixed_expenses_dict[day] = list(zip(group['Descrição'], group['Valor']))
+            fixed_expenses_dict[day] = list(zip(group['Valor'], group['Descrição']))
     return fixed_expenses_dict
 
 # transactions dict conversion functions
@@ -83,18 +84,32 @@ def load_data():
 
 def save_data():
     # convert dicts to DataFrames for saving
+    fixed_expenses_df = fixed_expenses_dict_to_df(st.session_state.fixed_expenses_dict)
+    if not fixed_expenses_df.empty:
+        fixed_expenses_df.to_csv(FIXED_EXPENSES_FILE, index=False)
+    
+    transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
+    if not transactions_df.empty:
+        transactions_df.to_csv(TRANSACTIONS_FILE, index=False)
 
-
+# add functions for each data type
 def add_fixed_expense(day, amount, description):
-    if day in st.session_state.fixed_expenses:
-        st.session_state.fixed_expenses[day].append((amount, description))
+    if day in st.session_state.fixed_expenses_dict:
+        st.session_state.fixed_expenses_dict[day].append((amount, description))
     else:
-        st.session_state.fixed_expenses[day] = [(amount, description)]
+        st.session_state.fixed_expenses_dict[day] = [(amount, description)]
+    save_data()
+
+def add_transaction(date_str, amount, type, description):
+    pass
 
 def main():
     st.title('🌡️💰 Termômetro Financeiro')
 
-    transactions_df, fixed_expenses_df = load_data()
+    # load data
+    load_data()
+    fixed_expenses_df = fixed_expenses_dict_to_df(st.session_state.fixed_expenses_dict)
+    transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
     
     # sidebar controls
     with st.sidebar:
@@ -108,14 +123,8 @@ def main():
 
         if add_submit:
             if description and amount > 0:
-                new_fixed_expense = pd.DataFrame({
-                    'Dia': [day],
-                    'Descrição': [description],
-                    'Valor': [amount]
-                })
-                fixed_expenses_df = pd.concat([fixed_expenses_df, new_fixed_expense], ignore_index=True)
-                st.write(fixed_expenses_df)
-                save_data()
+                add_fixed_expense(day, amount, description)
+                fixed_expenses_df = fixed_expenses_dict_to_df(st.session_state.fixed_expenses_dict)
                 st.success(f'Adicionado {description} (R$ {amount:.2f}) no dia {day}.')
             else:
                 st.error('Por favor, preencha todos os campos.')
@@ -133,7 +142,13 @@ def main():
     with tab2:
         st.subheader('Despesas Fixas')
         if not fixed_expenses_df.empty:
-            st.write(fixed_expenses_df)
+            st.dataframe(fixed_expenses_df, hide_index=True)
+            col1, col2 = st.columns(2)
+            col1.subheader('Despesas Fixas por Dia')
+            daily_expenses = fixed_expenses_df.groupby('Dia')['Valor'].sum()
+            col1.write(daily_expenses)
+            col2.subheader(f'Total de Despesas Fixas R${fixed_expenses_df["Valor"].sum():.2f}')
+            
         else:
             st.write('Nenhuma despesa fixa cadastrada até o momento.')
     with tab3:
