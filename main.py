@@ -29,7 +29,6 @@ def fixed_expenses_dict_to_df(fixed_expenses_dict):
     rows = []
     for day, expenses in fixed_expenses_dict.items():
         for amount, description in expenses:
-            print(day, description, amount)
             rows.append({
                 'Dia': int(day),
                 'Descrição': description,
@@ -103,6 +102,39 @@ def add_fixed_expense(day, amount, description):
 def add_transaction(date_str, amount, type, description):
     pass
 
+def is_business_day(day):
+    return day.weekday() < 5 # 0-4 are business days, 5-6 are weekend days
+
+def get_fifth_business_day(year, month):
+    bussiness_days = 0
+    day = 1
+
+    # get the maximum number of days in the month
+    _, last_day = calendar.monthrange(year, month)
+
+    # iterate through days until we reach the fifth business day
+    while bussiness_days < 5 and day <= last_day:
+        current_date = date(year, month, day)
+        if is_business_day(current_date):
+            bussiness_days += 1
+        if bussiness_days == 5:
+            return current_date
+        day += 1
+    return None
+
+def get_last_business_day(year, month):
+    _, last_day = calendar.monthrange(year, month)
+    
+    # start from the last day of the month and go backwards until we find a business day
+    current_day = last_day
+    while current_day > 0:
+        current_date = date(year, month, current_day)
+        if is_business_day(current_date):
+            return current_date
+        current_day -= 1
+    return None
+    
+
 def main():
     st.title('🌡️💰 Termômetro Financeiro')
 
@@ -119,9 +151,9 @@ def main():
         day = st.selectbox('Dia do mês', list(range(1, 32)), index=0)
         description = st.text_input('Descrição')
         amount = st.number_input('Valor', min_value=0.0, step=10.0, format='%.2f')
-        add_submit = st.button('Adicionar Despesa Fixa')
+        add_expense_submit_btn = st.button('Adicionar Despesa Fixa')
 
-        if add_submit:
+        if add_expense_submit_btn:
             if description and amount > 0:
                 add_fixed_expense(day, amount, description)
                 fixed_expenses_df = fixed_expenses_dict_to_df(st.session_state.fixed_expenses_dict)
@@ -138,6 +170,17 @@ def main():
 
     with tab1:
         st.subheader('Planilha de Gastos')
+        if not transactions_df.empty:
+            st.dataframe(transactions_df, hide_index=True)
+            col1, col2 = st.columns(2)
+            col1.subheader('Entradas e Saídas por Dia')
+            daily_transactions = transactions_df.groupby('Dia')[['Entrada', 'Saída']].sum()
+            col1.write(daily_transactions)
+            col2.subheader(f'Saldo Atual R${transactions_df["Saldo"].iloc[-1]:.2f}')
+            col2.write(f'Entradas Totais R${transactions_df["Entrada"].sum():.2f}')
+            col2.write(f'Saídas Totais R${transactions_df["Saída"].sum():.2f}')
+        else:
+            st.write('Planilha de gastos vazia. Crie uma nova planilha financeira na aba "Criar Planilha Financeira".')
     
     with tab2:
         st.subheader('Despesas Fixas')
@@ -148,10 +191,77 @@ def main():
             daily_expenses = fixed_expenses_df.groupby('Dia')['Valor'].sum()
             col1.write(daily_expenses)
             col2.subheader(f'Total de Despesas Fixas R${fixed_expenses_df["Valor"].sum():.2f}')
-            
+
         else:
             st.write('Nenhuma despesa fixa cadastrada até o momento.')
     with tab3:
         st.subheader('Criar Nova Planilha Financeira')
+        if not fixed_expenses_df.empty:
+            with st.form(key='create_transactions_form'):
+                starting_amount = st.number_input('Saldo Inicial', min_value=0.0, step=10.0, format='%.2f', value=1000.0)
+                salary_day = st.selectbox('Dia do Salário',['Quinto dia útil', 'Último dia útil'] + list(range(1,32)), index=0)
+                salary_amount = st.number_input('Valor do Salário', min_value=0.0, step=10.0, format='%.2f', value=1518.0)
+                expense_per_day = st.number_input('Gasto Diária', min_value=0.0, step=10.0, format='%.2f', value=50.0)
+
+                create_planner_submit_btn = st.form_submit_button('Criar Planilha')
+            if create_planner_submit_btn:
+                full_fixed_expenses_dict = {day: sum([amount for amount, _ in expenses]) for day, expenses in st.session_state.fixed_expenses_dict.items()}
+
+                dates = [(date.today() + timedelta(days=i)) for i in range((date(date.today().year, 12, 31) - date.today()).days + 1)]
+                current_balance = starting_amount
+
+                for current_date in dates:
+                    action_discription = []
+                    income = 0
+                    expense = 0
+
+                    if salary_day == 'Quinto dia útil':
+                        fifth_business_day = get_fifth_business_day(current_date.year, current_date.month)
+                        if fifth_business_day and current_date == fifth_business_day:
+                            income += salary_amount
+                            action_discription.append('Salário')
+
+                    elif salary_day == 'Último dia útil':
+                        last_business_day = get_last_business_day(current_date.year, current_date.month)
+                        if last_business_day and current_date == last_business_day:
+                            income += salary_amount
+                            action_discription.append('Salário')
+
+                    # for numerical day of month
+                    elif isinstance(salary_day, int) and current_date.day == salary_day:
+                        income += salary_amount
+                        action_discription.append('Salário')
+                    
+                    # check for fixed expenses on this day
+                    day_of_month = current_date.day
+                    if day_of_month in st.session_state.fixed_expenses_dict:
+                        fixed_expense = full_fixed_expenses_dict[day_of_month]
+                        expense += fixed_expense
+                        for amount, description in st.session_state.fixed_expenses_dict[day_of_month]:
+                            action_discription.append(f'{description}')
+                    
+                    # add daily expense
+                    action_discription.append('Gasto Diário')
+
+                    # calculate daily balance
+                    daily_net = income - expense - expense_per_day
+                    current_balance += daily_net
+                    date_str = current_date.strftime('%d/%m/%Y')
+
+                    # store in transactions dict
+                    st.session_state.transactions_dict[date_str] = {
+                        'Entrada': income,
+                        'Saída': expense,
+                        'Diário': expense_per_day,
+                        'Saldo': current_balance,
+                        'Descrição': ' + '.join(action_discription)
+                    }
+                save_data()
+                transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
+                st.success('Planilha financeira criada com sucesso!')
+                st.dataframe(transactions_df, hide_index=True)
+
+        else:
+            st.write('Por favor, adicione despesas fixas antes de criar a planilha financeira.')
 if __name__ == '__main__':
     main()
