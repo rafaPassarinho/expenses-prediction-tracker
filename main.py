@@ -3,6 +3,8 @@ import pandas as pd
 import datetime
 import calendar
 import os
+import plotly.express as px
+import plotly.graph_objects as go
 
 from datetime import date, timedelta
 
@@ -100,7 +102,78 @@ def add_fixed_expense(day, amount, description):
     save_data()
 
 def add_transaction(date_str, amount, type, description):
-    pass
+    if type not in ['Entrada', 'Saída', 'Diário']:
+        st.error("Tipo inválido. Use 'Entrada', 'Saída' ou 'Diário'.")
+        return
+    
+    from datetime import datetime
+    current_date = datetime.strptime(date_str, '%d/%m/%Y')
+
+    if date_str not in st.session_state.transactions_dict:
+        st.session_state.transactions_dict[date_str] = {
+            'Entrada': 0.0,
+            'Saída': 0.0,
+            'Diário': 0.0,
+            'Saldo': 0.0,
+            'Descrição': description
+        }
+    
+    # Calculate the difference this transaction will make to the balance
+    old_value = st.session_state.transactions_dict[date_str][type]
+    
+    # Update the specified column
+    st.session_state.transactions_dict[date_str][type] = amount
+    
+    # If description provided, update or append it
+    if description:
+        if st.session_state.transactions_dict[date_str]['Descrição']:
+            st.session_state.transactions_dict[date_str]['Descrição'] += f" + {description}"
+        else:
+            st.session_state.transactions_dict[date_str]['Descrição'] = description
+    
+    # Get all dates and sort chronologically
+    all_dates = list(st.session_state.transactions_dict.keys())
+    all_dates.sort(key=lambda d: datetime.strptime(d, '%d/%m/%Y'))
+    
+    # Find current date's position in the sorted list
+    if date_str in all_dates:
+        current_index = all_dates.index(date_str)
+    else:
+        # If date somehow isn't in the list, add it
+        all_dates.append(date_str)
+        all_dates.sort(key=lambda d: datetime.strptime(d, '%d/%m/%Y'))
+        current_index = all_dates.index(date_str)
+    
+    # Update current day's balance and all future balances sequentially
+    for i in range(current_index, len(all_dates)):
+        current_date = all_dates[i]
+        
+        if i > 0:
+            # Get previous day's balance
+            prev_date = all_dates[i-1]
+            prev_balance = st.session_state.transactions_dict[prev_date]['Saldo']
+            
+            # Calculate new balance
+            entrada = st.session_state.transactions_dict[current_date]['Entrada']
+            saida = st.session_state.transactions_dict[current_date]['Saída']
+            diario = st.session_state.transactions_dict[current_date]['Diário']
+            
+            # Calculate daily net
+            daily_net = entrada - saida - diario
+            
+            # Update balance
+            st.session_state.transactions_dict[current_date]['Saldo'] = prev_balance + daily_net
+        else:
+            # For the first date in the sequence, there's no previous balance
+            entrada = st.session_state.transactions_dict[current_date]['Entrada']
+            saida = st.session_state.transactions_dict[current_date]['Saída']
+            diario = st.session_state.transactions_dict[current_date]['Diário']
+            
+            # Set balance directly
+            st.session_state.transactions_dict[current_date]['Saldo'] = entrada - saida - diario
+    
+    # Save the updated data
+    save_data()
 
 def is_business_day(day):
     return day.weekday() < 5 # 0-4 are business days, 5-6 are weekend days
@@ -134,6 +207,16 @@ def get_last_business_day(year, month):
         current_day -= 1
     return None
     
+def color_by_value(val):
+    if val > 2000:
+        color = 'green'
+    elif 1000 <= val <= 2000:
+        color = 'lightgreen'
+    elif 0 <= val < 1000:
+        color = 'orange'
+    else:
+        color = 'red'
+    return f'background-color: {color}; color: white;'
 
 def main():
     st.title('🌡️💰 Termômetro Financeiro')
@@ -146,7 +229,25 @@ def main():
     # sidebar controls
     with st.sidebar:
         st.header('Adicionar Transação')
+        with st.form(key='add_transaction_form'):
+            col1, col2 = st.columns(2)
 
+            transaction_date = col1.date_input('Data', value=date.today())
+            transaction_type = col2.selectbox('Tipo', ['Entrada', 'Saída', 'Diário'])
+
+            transaction_amount = col2.number_input('Valor', min_value=0.0, step=10.0, format='%.2f')
+            transaction_description = col1.text_input('Descrição')
+
+            submit_transaction_btn = st.form_submit_button('Adicionar Transação')
+
+            if submit_transaction_btn:
+                if transaction_amount > 0:
+                    date_str = transaction_date.strftime('%d/%m/%Y')
+                    add_transaction(date_str, transaction_amount, transaction_type, transaction_description)
+                    st.success(f'Transação adicionada: {transaction_type} de R$ {transaction_amount:.2f} no dia {date_str}.')
+                    st.rerun()
+                else:
+                    st.error('Valor deve ser maior que zero.')
         st.header('Adicionar Despesa Fixa')
         day = st.selectbox('Dia do mês', list(range(1, 32)), index=0)
         description = st.text_input('Descrição')
@@ -170,15 +271,54 @@ def main():
 
     with tab1:
         st.subheader('Planilha de Gastos')
+        transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
+        styled_transactions_df = transactions_df.style.format(
+            {'Entrada': 'R${:.2f}', 'Saída': 'R${:.2f}', 'Diário': 'R${:.2f}', 'Saldo': 'R${:.2f}'},
+            subset=['Entrada', 'Saída', 'Diário', 'Saldo']
+        ).map(color_by_value, subset=['Saldo'])
         if not transactions_df.empty:
-            st.dataframe(transactions_df, hide_index=True)
-            col1, col2 = st.columns(2)
-            col1.subheader('Entradas e Saídas por Dia')
-            daily_transactions = transactions_df.groupby('Dia')[['Entrada', 'Saída']].sum()
-            col1.write(daily_transactions)
-            col2.subheader(f'Saldo Atual R${transactions_df["Saldo"].iloc[-1]:.2f}')
-            col2.write(f'Entradas Totais R${transactions_df["Entrada"].sum():.2f}')
-            col2.write(f'Saídas Totais R${transactions_df["Saída"].sum():.2f}')
+            st.dataframe(styled_transactions_df, hide_index=True)
+            st.subheader('Evolução do Saldo ao Longo do Tempo')
+            
+            plot_df = transactions_df.copy()
+            plot_df['Dia'] = pd.to_datetime(plot_df['Dia'], format='%d/%m/%Y')
+            
+            plot_df = plot_df.sort_values('Dia')
+
+            fig = px.line(plot_df, x='Dia', y='Saldo')
+
+            for y_value, color in [(0, 'red'), (1000, 'orange'), (2000, 'green')]:
+                fig.add_shape(
+                    type='line',
+                    x0=plot_df['Dia'].min(),
+                    y0=y_value,
+                    x1=plot_df['Dia'].max(),
+                    y1=y_value,
+                    line=dict(color=color, width=1, dash='dash'),
+                )
+                fig.add_annotation(
+                    x=plot_df['Dia'].max(),
+                    y=y_value,
+                    text=f'R${y_value}',
+                    showarrow=False,
+                    xshift=10,
+                    font=dict(color=color),
+                )
+            fig.update_layout(
+                xaxis_title='Data',
+                yaxis_title='Saldo (R$)',
+                hovermode='x unified',
+                height=500,
+                margin=dict(l=20, r=20, t=40, b=20),
+                plot_bgcolor='black',
+                legend_title_text='Valores',
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader('Entradas e Saídas do Dia')
+            daily_transactions = transactions_df[transactions_df['Dia'] == date.today().strftime("%d/%m/%Y")]
+            st.dataframe(daily_transactions[['Dia','Entrada', 'Saída', 'Diário', 'Saldo','Descrição']], hide_index=True)
         else:
             st.write('Planilha de gastos vazia. Crie uma nova planilha financeira na aba "Criar Planilha Financeira".')
     
