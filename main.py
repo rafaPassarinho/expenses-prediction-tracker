@@ -127,7 +127,12 @@ def add_transaction(date_str, amount, type, description):
     # If description provided, update or append it
     if description:
         if st.session_state.transactions_dict[date_str]['Descrição']:
-            st.session_state.transactions_dict[date_str]['Descrição'] += f" + {description}"
+            # Append to existing description removing 'Gasto Diário' if present
+            if 'Gasto Diário' in st.session_state.transactions_dict[date_str]['Descrição']:
+                st.session_state.transactions_dict[date_str]['Descrição'] = st.session_state.transactions_dict[date_str]['Descrição'].replace('Gasto Diário', '')
+                st.session_state.transactions_dict[date_str]['Descrição'] += f'{description}'
+            else:
+                st.session_state.transactions_dict[date_str]['Descrição'] += f" + {description}"
         else:
             st.session_state.transactions_dict[date_str]['Descrição'] = description
     
@@ -174,6 +179,21 @@ def add_transaction(date_str, amount, type, description):
     
     # Save the updated data
     save_data()
+
+def parse_amount_expression(expression):
+    try:
+        clean_expr = expression.replace(',', '.')
+
+        import re
+        if not re.match(r'^[\d\.\+\-\*\/\(\)\s]+$', clean_expr):
+            raise ValueError("Invalid characters in expression")
+        
+        result = eval(clean_expr)
+        return float(result)
+    except Exception as e:
+        st.error(f"Erro ao calcular a expressão: {e}")
+        return 0.0
+
 
 def is_business_day(day):
     return day.weekday() < 5 # 0-4 are business days, 5-6 are weekend days
@@ -235,19 +255,20 @@ def main():
             transaction_date = col1.date_input('Data', value=date.today())
             transaction_type = col2.selectbox('Tipo', ['Entrada', 'Saída', 'Diário'])
 
-            transaction_amount = col2.number_input('Valor', min_value=0.0, step=10.0, format='%.2f')
+            transaction_amount_str = col2.text_input('Valor (ex: 25.50 ou 10+15)',
+                                                     placeholder='Digite o valor ou expressão')
             transaction_description = col1.text_input('Descrição')
 
             submit_transaction_btn = st.form_submit_button('Adicionar Transação')
 
             if submit_transaction_btn:
-                if transaction_amount > 0:
+                transaction_amount = parse_amount_expression(transaction_amount_str)
+                if transaction_amount >= 0:
                     date_str = transaction_date.strftime('%d/%m/%Y')
                     add_transaction(date_str, transaction_amount, transaction_type, transaction_description)
                     st.success(f'Transação adicionada: {transaction_type} de R$ {transaction_amount:.2f} no dia {date_str}.')
-                    st.rerun()
                 else:
-                    st.error('Valor deve ser maior que zero.')
+                    st.error('Valor deve ser maior ou igual a zero.')
         st.header('Adicionar Despesa Fixa')
         day = st.selectbox('Dia do mês', list(range(1, 32)), index=0)
         description = st.text_input('Descrição')
@@ -272,11 +293,12 @@ def main():
     with tab1:
         st.subheader('Planilha de Gastos')
         transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
-        styled_transactions_df = transactions_df.style.format(
+        
+        if not transactions_df.empty:
+            styled_transactions_df = transactions_df.style.format(
             {'Entrada': 'R${:.2f}', 'Saída': 'R${:.2f}', 'Diário': 'R${:.2f}', 'Saldo': 'R${:.2f}'},
             subset=['Entrada', 'Saída', 'Diário', 'Saldo']
         ).map(color_by_value, subset=['Saldo'])
-        if not transactions_df.empty:
             st.dataframe(styled_transactions_df, hide_index=True)
             st.subheader('Evolução do Saldo ao Longo do Tempo')
             
@@ -399,7 +421,6 @@ def main():
                 save_data()
                 transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
                 st.success('Planilha financeira criada com sucesso!')
-                st.dataframe(transactions_df, hide_index=True)
 
         else:
             st.write('Por favor, adicione despesas fixas antes de criar a planilha financeira.')
