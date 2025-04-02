@@ -125,7 +125,12 @@ def add_transaction(date_str, amount, type, description):
     st.session_state.transactions_dict[date_str][type] = amount
     
     # If description provided, update or append it
-    if description:
+    if description or description == '':
+        # If description is empty, remove 'Gasto Diário' if present
+        if description == '':
+            description = st.session_state.transactions_dict[date_str]['Descrição']
+            if 'Gasto Diário' in description:
+                description = description.replace('Gasto Diário', '')
         if st.session_state.transactions_dict[date_str]['Descrição']:
             # Append to existing description removing 'Gasto Diário' if present
             if 'Gasto Diário' in st.session_state.transactions_dict[date_str]['Descrição']:
@@ -421,6 +426,7 @@ def main():
                 save_data()
                 transactions_df = transactions_dict_to_df(st.session_state.transactions_dict)
                 st.success('Planilha financeira criada com sucesso!')
+                st.rerun()
 
         else:
             st.write('Por favor, adicione despesas fixas antes de criar a planilha financeira.')
