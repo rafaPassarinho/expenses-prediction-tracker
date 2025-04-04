@@ -125,21 +125,14 @@ def add_transaction(date_str, amount, type, description):
     st.session_state.transactions_dict[date_str][type] = amount
     
     # If description provided, update or append it
-    if description or description == '':
-        # If description is empty, remove 'Gasto Diário' if present
-        if description == '':
-            description = st.session_state.transactions_dict[date_str]['Descrição']
-            if 'Gasto Diário' in description:
-                description = description.replace('Gasto Diário', '')
+    if description:
         if st.session_state.transactions_dict[date_str]['Descrição']:
-            # Append to existing description removing 'Gasto Diário' if present
-            if 'Gasto Diário' in st.session_state.transactions_dict[date_str]['Descrição']:
-                st.session_state.transactions_dict[date_str]['Descrição'] = st.session_state.transactions_dict[date_str]['Descrição'].replace('Gasto Diário', '')
-                st.session_state.transactions_dict[date_str]['Descrição'] += f'{description}'
-            else:
-                st.session_state.transactions_dict[date_str]['Descrição'] += f" + {description}"
+            st.session_state.transactions_dict[date_str]['Descrição'] += ' + ' + description
         else:
             st.session_state.transactions_dict[date_str]['Descrição'] = description
+        if 'Gasto Diário' in st.session_state.transactions_dict[date_str]['Descrição']:
+            st.session_state.transactions_dict[date_str]['Descrição'] = st.session_state.transactions_dict[date_str]['Descrição'].replace('Gasto Diário', '')
+    
     
     # Get all dates and sort chronologically
     all_dates = list(st.session_state.transactions_dict.keys())
